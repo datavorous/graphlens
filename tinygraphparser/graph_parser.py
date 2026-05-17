@@ -53,7 +53,7 @@ class TFLiteGraphParser:
         result: Dict[str, Any] = {"path": path, "subgraphs": []}
         for si in range(model.SubgraphsLength()):
             sg = model.Subgraphs(si)
-            name = _decode(sg.Name()) if sg.Name() else "main"
+            name = _decode(sg.Name()) if sg.Name() else f"subgraph_{si}"
             ops = [self._parse_op(model, sg, oi, enum_op, enum_type)
                    for oi in range(sg.OperatorsLength())]
             result["subgraphs"].append({"name": name, "ops": ops})

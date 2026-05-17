@@ -54,7 +54,6 @@ def _camel_to_upper_snake(camel: str) -> str:
 class OpSupport:
     tfl_supported: Set[str] = field(default_factory=set)
     builder_file: Dict[str, str] = field(default_factory=dict)
-    composite_supported: Set[str] = field(default_factory=set)
     rows: List[Dict[str, str]] = field(default_factory=list)
 
 
@@ -73,14 +72,7 @@ def load_op_support(csv_path: str) -> OpSupport:
 
             elif code.startswith(_SHLO_PREFIX):
                 rest = code[len(_SHLO_PREFIX):]
-                if rest.startswith(":"):
-                    m = re.match(r":(k[A-Za-z0-9]+)", rest)
-                    if m:
-                        out.composite_supported.add(m.group(1))
-                else:
-                    # composite_supported per-name is not consulted during
-                    # classification; composite handling here is coarser than
-                    # real QNN dispatch.
+                if not rest.startswith(":"):
                     out.tfl_supported.add("STABLEHLO_COMPOSITE")
                     out.tfl_supported.add("SHLO_COMPOSITE")
     return out
@@ -302,7 +294,20 @@ def compare_to_actual(results: List[PartitionResult],
             for idx in range(p.op_indices[0], p.op_indices[1] + 1):
                 target.add(idx)
 
-        a = actual.get(r.subgraph, {})
+        if r.subgraph not in actual:
+            diffs.append({
+                "signature": r.subgraph,
+                "predicted": {"npu": sum(1 for p in r.partitions if p.kind == "NPU"),
+                              "cpu": sum(1 for p in r.partitions if p.kind == "CPU")},
+                "actual": {"npu": None, "cpu": None},
+                "divergent_ops": [],
+                "false_cpu_ops": [],
+                "agreement": None,
+                "ground_truth": "missing",
+            })
+            continue
+
+        a = actual[r.subgraph]
         actual_cpu = set(a.get("cpu_op_indices", []))
         all_ops = predicted_cpu | predicted_npu
         actual_npu = all_ops - actual_cpu
@@ -328,6 +333,10 @@ def report_comparison(diffs: List[Dict[str, Any]], show_op_limit: int = 20) -> N
         print(f"Signature: {d['signature']}")
         print(f"  predicted: NPU={d['predicted']['npu']}  CPU={d['predicted']['cpu']}")
         print(f"  actual:    NPU={d['actual']['npu']}  CPU={d['actual']['cpu']}")
+        if d.get("ground_truth") == "missing":
+            print(f"  agreement: {RED}no ground truth{RESET}")
+            print()
+            continue
         print(f"  agreement: {d['agreement'] * 100:.1f}%")
         for label, key, color in (("predicted NPU, actual CPU", "divergent_ops", RED),
                                    ("predicted CPU, actual NPU", "false_cpu_ops", GREEN)):
