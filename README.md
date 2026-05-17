@@ -1,4 +1,5 @@
-# lensrt
+# LensRT
+
 TFLite graph analyzer for QNN delegation diagnostics.
 
 ## Install
@@ -17,7 +18,7 @@ Static analysis works after this. For runtime analysis see [Runtime setup](#runt
 ```python
 from lensrt import Static
 
-s = Static("models/qwen.tflite", "analysis/opSupportMap.csv")
+s = Static("models/qwen.tflite", "datasets/opSupportMap.csv")
 s.report()
 data = s.json()
 ```
@@ -25,7 +26,7 @@ data = s.json()
 For `.litertlm` files:
 
 ```python
-s = Static.from_litertlm("model.litertlm", "analysis/opSupportMap.csv")
+s = Static.from_litertlm("model.litertlm", "datasets/opSupportMap.csv")
 ```
 
 Expected output (first signature only):
