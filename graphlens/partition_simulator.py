@@ -17,7 +17,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .graph_parser import find_dynamic_shape_ops, GREEN, RED, RESET
+from .graph_parser import _find_dynamic_shape_ops, GREEN, RED, RESET
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ class OpSupport:
     rows: List[Dict[str, str]] = field(default_factory=list)
 
 
-def load_op_support(csv_path: str) -> OpSupport:
+def _load_op_support(csv_path: str) -> OpSupport:
     """Parse the tab-separated opSupportMap.csv into an OpSupport struct."""
     out = OpSupport()
     with open(csv_path) as f:
@@ -118,10 +118,10 @@ def _classify_op(op: Dict[str, Any], op_support: OpSupport, dynamic_indices: Set
     return False, "no_builder"
 
 
-def simulate_partition(graph: Dict[str, Any], op_support: OpSupport) -> List[PartitionResult]:
+def _simulate_partition(graph: Dict[str, Any], op_support: OpSupport) -> List[PartitionResult]:
     """Classify ops by static eligibility. Returns one PartitionResult per subgraph."""
     dyn_by_sg: Dict[str, Set[int]] = defaultdict(set)
-    for d in find_dynamic_shape_ops(graph):
+    for d in _find_dynamic_shape_ops(graph):
         dyn_by_sg[d["subgraph"]].add(d["op_index"])
 
     results: List[PartitionResult] = []
@@ -180,7 +180,7 @@ def _partition_subgraph(sg_name: str, ops: List[Dict[str, Any]],
 # Reports
 # ---------------------------------------------------------------------------
 
-def report_partition(result: PartitionResult) -> None:
+def _report_partition(result: PartitionResult) -> None:
     parts = result.partitions
     npu = [p for p in parts if p.kind == "NPU"]
     cpu = [p for p in parts if p.kind == "CPU"]
@@ -212,9 +212,9 @@ def report_partition(result: PartitionResult) -> None:
             print(f"    {RED}{reason}{RESET}: {total} ops [{ops_str}]")
 
 
-def report_partitions(results: List[PartitionResult]) -> None:
+def _report_partitions(results: List[PartitionResult]) -> None:
     for r in results:
-        report_partition(r)
+        _report_partition(r)
         print()
 
 
@@ -229,8 +229,8 @@ def _fmt_op_oneline(op: Dict[str, Any]) -> str:
     return f"{op['opname']} {dtype} {in_shape} -> {out_shape}"
 
 
-def report_seams(graph: Dict[str, Any], results: List[PartitionResult],
-                 context: int = 2, kind: str = "CPU") -> None:
+def _report_seams(graph: Dict[str, Any], results: List[PartitionResult],
+                  context: int = 2, kind: str = "CPU") -> None:
     """Print ops surrounding every CPU (or NPU) partition. Useful for diagnosing why a run split."""
     ops_by_sg = {sg["name"]: sg["ops"] for sg in graph["subgraphs"]}
 
@@ -271,93 +271,3 @@ def report_seams(graph: Dict[str, Any], results: List[PartitionResult],
                 print(f"  next: op {ops[j]['index']} {_fmt_op_oneline(ops[j])}")
             print()
 
-
-# ---------------------------------------------------------------------------
-# Comparison harness - predicted vs actual
-# ---------------------------------------------------------------------------
-
-def compare_to_actual(results: List[PartitionResult],
-                      actual: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Diff simulator output against real apply_plugin_main results.
-
-    `actual` schema (per subgraph signature):
-        {"npu_partitions": int, "cpu_partitions": int, "cpu_op_indices": [int, ...]}
-
-    Returns per-subgraph diffs with divergent_ops / false_cpu_ops / agreement.
-    """
-    diffs: List[Dict[str, Any]] = []
-    for r in results:
-        predicted_cpu: Set[int] = set()
-        predicted_npu: Set[int] = set()
-        for p in r.partitions:
-            target = predicted_cpu if p.kind == "CPU" else predicted_npu
-            for idx in range(p.op_indices[0], p.op_indices[1] + 1):
-                target.add(idx)
-
-        if r.subgraph not in actual:
-            diffs.append({
-                "signature": r.subgraph,
-                "predicted": {"npu": sum(1 for p in r.partitions if p.kind == "NPU"),
-                              "cpu": sum(1 for p in r.partitions if p.kind == "CPU")},
-                "actual": {"npu": None, "cpu": None},
-                "divergent_ops": [],
-                "false_cpu_ops": [],
-                "agreement": None,
-                "ground_truth": "missing",
-            })
-            continue
-
-        a = actual[r.subgraph]
-        actual_cpu = set(a.get("cpu_op_indices", []))
-        all_ops = predicted_cpu | predicted_npu
-        actual_npu = all_ops - actual_cpu
-
-        divergent = sorted(predicted_npu & actual_cpu)
-        false_cpu = sorted(predicted_cpu & actual_npu)
-        agree = (len(all_ops) - len(divergent) - len(false_cpu)) / max(1, len(all_ops))
-
-        diffs.append({
-            "signature": r.subgraph,
-            "predicted": {"npu": sum(1 for p in r.partitions if p.kind == "NPU"),
-                          "cpu": sum(1 for p in r.partitions if p.kind == "CPU")},
-            "actual": {"npu": a.get("npu_partitions"), "cpu": a.get("cpu_partitions")},
-            "divergent_ops": divergent,
-            "false_cpu_ops": false_cpu,
-            "agreement": agree,
-        })
-    return diffs
-
-
-def report_comparison(diffs: List[Dict[str, Any]], show_op_limit: int = 20) -> None:
-    for d in diffs:
-        print(f"Signature: {d['signature']}")
-        print(f"  predicted: NPU={d['predicted']['npu']}  CPU={d['predicted']['cpu']}")
-        print(f"  actual:    NPU={d['actual']['npu']}  CPU={d['actual']['cpu']}")
-        if d.get("ground_truth") == "missing":
-            print(f"  agreement: {RED}no ground truth{RESET}")
-            print()
-            continue
-        print(f"  agreement: {d['agreement'] * 100:.1f}%")
-        for label, key, color in (("predicted NPU, actual CPU", "divergent_ops", RED),
-                                   ("predicted CPU, actual NPU", "false_cpu_ops", GREEN)):
-            ops = d[key]
-            if not ops:
-                continue
-            shown = ops[:show_op_limit]
-            more = f" (+{len(ops) - show_op_limit} more)" if len(ops) > show_op_limit else ""
-            print(f"  {color}{label}{RESET}: {shown}{more}")
-        print()
-
-
-__all__ = [
-    "OpSupport",
-    "Partition",
-    "PartitionResult",
-    "load_op_support",
-    "simulate_partition",
-    "report_partition",
-    "report_partitions",
-    "report_seams",
-    "compare_to_actual",
-    "report_comparison",
-]

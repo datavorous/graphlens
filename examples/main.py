@@ -1,38 +1,24 @@
 # Run from the project root: uv run python examples/main.py
 # Expects gemma.litertlm two levels up (edge/gemma.litertlm).
-from tinygraphparser import (
-    LiteRTLMExtractor,
-    TFLiteGraphParser,
-    pretty_graph,
-    report_op_histogram,
-    report_dynamic_shape_ops,
-    load_op_support,
-    simulate_partition,
-    report_partitions,
-    report_seams,
-)
+from graphlens import Inspector
 
 
 def section(title: str) -> None:
     print(f"\n## {title}\n")
 
 
-tflite_files = LiteRTLMExtractor.extract("../../gemma.litertlm", "../../litertlm_dump")
-graph = TFLiteGraphParser().parse(tflite_files[2])
-op_support = load_op_support("../analysis/opSupportMap.csv")
-partitions = simulate_partition(graph, op_support)
-
-section("Graph structure (first/last 4 ops)")
-pretty_graph(graph, minimize=True, max_ops=8)
-
-section("Op histogram (with dtype splits)")
-report_op_histogram(graph)
+inspector = Inspector.from_litertlm(
+    "../../gemma.litertlm",
+    op_support_path="../analysis/opSupportMap.csv",
+    dump_dir="../../litertlm_dump",
+)
+inspector.analyze()
 
 section("Dynamic shape / index inputs (fragmentation candidates)")
-report_dynamic_shape_ops(graph)
+inspector.report_dynamic_shapes()
 
 section("Partition simulation")
-report_partitions(partitions)
+inspector.report_partitions()
 
 section("CPU seams (+/-2 ops around each CPU partition)")
-report_seams(graph, partitions, context=2, kind="CPU")
+inspector.report_seams(context=2, kind="CPU")

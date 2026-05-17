@@ -15,6 +15,21 @@ wheels = [
 ]
 
 [[package]]
+name = "graphlens"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "flatbuffers" },
+    { name = "tflite" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "flatbuffers", specifier = ">=25.0.0" },
+    { name = "tflite", specifier = ">=2.18.0" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.2.6"
 source = { registry = "https://pypi.org/simple" }
@@ -173,19 +188,4 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/93/0e/186beaed34ce9a740d7add374118b206fac75631c94bb4fa72d63ec32f7f/tflite-2.18.0.tar.gz", hash = "sha256:07e9478e0d0fb4d3082d0ce8e7e6eab4a90a7174412faec7702e24bfcbf4190d", size = 49232, upload-time = "2025-01-28T11:32:59.034Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/9b/f35d52989cb458a911f1ed4164b37dcf6559237b73c962c09ed0b6cecd4f/tflite-2.18.0-py2.py3-none-any.whl", hash = "sha256:a49a4316530377c597bb272176c12d5d3c4453640118b068c93a8c3cc6c5c2c1", size = 153155, upload-time = "2025-01-28T11:32:57.201Z" },
-]
-
-[[package]]
-name = "tinygraphparser"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "flatbuffers" },
-    { name = "tflite" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "flatbuffers", specifier = ">=25.0.0" },
-    { name = "tflite", specifier = ">=2.18.0" },
 ]
