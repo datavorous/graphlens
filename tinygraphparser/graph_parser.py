@@ -270,22 +270,27 @@ def find_dynamic_shape_ops(graph: Dict[str, Any]) -> List[Dict[str, Any]]:
     return results
 
 
-def report_dynamic_shape_ops(graph: Dict[str, Any]) -> None:
+def report_dynamic_shape_ops(graph: Dict[str, Any], max_name: int = 40, max_hits: int | None = None) -> None:
     hits = find_dynamic_shape_ops(graph)
     if not hits:
         print(f"{GREEN}No dynamic shape/index ops found in {graph['path']}{RESET}")
         return
     print(f"{RED}{len(hits)} fragmentation candidate(s) in {graph['path']}{RESET}")
-    for h in hits:
-        print(f"  [{h['op_index']:>4}] {GREEN}{h['opname']}{RESET}  (subgraph: {h['subgraph']})")
+    shown = hits[:max_hits] if max_hits else hits
+    for h in shown:
+        sg = _clip(h["subgraph"], max_name)
+        print(f"  [{h['op_index']:>4}] {GREEN}{h['opname']}{RESET}  (subgraph: {sg})")
         for d in h["dynamic_inputs"]:
             t = d["tensor"]
+            name = _clip(t["name"], max_name)
             if d["reason"] == "inferred_dim":
                 print(f"         slot {d['slot']} ({d['label']}): {RED}INFERRED_DIM{RESET}  "
-                      f"{t['name']}  {t['dtype']}  values={d['const_values']}")
+                      f"{name}  {t['dtype']}  values={d['const_values']}")
             else:
                 print(f"         slot {d['slot']} ({d['label']}): {RED}RUNTIME{RESET}  "
-                      f"{t['name']}  {t['dtype']}  {t['shape']}")
+                      f"{name}  {t['dtype']}  {t['shape']}")
+    if max_hits and len(hits) > max_hits:
+        print(f"  ... ({len(hits) - max_hits} more)")
 
 
 # ---------------------------------------------------------------------------
