@@ -22,7 +22,12 @@ from .partition_simulator import (
     _report_seams,
     _simulate_partition,
 )
-from .runtime_analyser import RuntimeAnalyser
+from .runtime_analyser import (
+    RuntimeAnalyser,
+    _compute_membership,
+    _parse_dispatch_op_meta,
+    _report_membership,
+)
 
 
 def _section(title: str, first: bool = False) -> None:
@@ -135,6 +140,21 @@ class Runtime:
 
     def report(self) -> None:
         self._analyser.report(self.results)
+
+    def partition_membership(self, original_model_path: str) -> Dict[str, Any]:
+        """Map each DISPATCH_OP back to its absorbed original ops via tensor-name BFS."""
+        if not original_model_path:
+            raise RuntimeError(
+                "partition_membership requires the original .tflite path"
+            )
+        if not Path(original_model_path).exists():
+            raise RuntimeError(f"original model not found: {original_model_path}")
+        original_graph = TFLiteGraphParser().parse(original_model_path)
+        rewritten_meta = _parse_dispatch_op_meta(self.rewritten_path)
+        return _compute_membership(original_graph, rewritten_meta)
+
+    def report_membership(self, membership: Dict[str, Any]) -> None:
+        _report_membership(membership)
 
     def json(self) -> Dict[str, Any]:
         return _jsonable(

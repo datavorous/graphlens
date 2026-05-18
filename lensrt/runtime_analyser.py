@@ -410,3 +410,153 @@ def _report_global_log(
                 f"    {p['op_type']}  requested={p['requested']}  "
                 f"supported={p['supported']}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Per-partition op membership (BFS through original graph)
+# ---------------------------------------------------------------------------
+
+
+def _parse_dispatch_op_meta(rewritten_path: str) -> dict:
+    """
+    Per-subgraph DISPATCH_OP entries from the rewritten flatbuffer. Uses
+    tensor NAMES (stable across the partition rewrite) not indices.
+    """
+    from tflite.Model import Model
+
+    with open(rewritten_path, "rb") as f:
+        model = Model.GetRootAsModel(f.read(), 0)
+
+    result: dict = {}
+    for si in range(model.SubgraphsLength()):
+        sg = model.Subgraphs(si)
+        name = sg.Name().decode() if sg.Name() else f"subgraph_{si}"
+        tensor_names = [sg.Tensors(i).Name().decode() for i in range(sg.TensorsLength())]
+        entries = []
+        dispatch_seq = 0
+        for oi in range(sg.OperatorsLength()):
+            op = sg.Operators(oi)
+            opc = model.OperatorCodes(op.OpcodeIndex())
+            if opc.CustomCode() != b"DISPATCH_OP":
+                continue
+            entries.append(
+                {
+                    "dispatch_op_index": oi,
+                    "qnn_graph_name": f"qnn_partition_{dispatch_seq}",
+                    "input_tensor_names": [
+                        tensor_names[op.Inputs(i)] for i in range(op.InputsLength())
+                    ],
+                    "output_tensor_names": [
+                        tensor_names[op.Outputs(i)] for i in range(op.OutputsLength())
+                    ],
+                }
+            )
+            dispatch_seq += 1
+        if entries:
+            result[name] = {
+                "dispatch_ops": entries,
+                "non_delegated_count": sum(
+                    1
+                    for oi in range(sg.OperatorsLength())
+                    if model.OperatorCodes(sg.Operators(oi).OpcodeIndex()).CustomCode()
+                    != b"DISPATCH_OP"
+                ),
+            }
+    return result
+
+
+def _compute_membership(original_graph: dict, rewritten_meta: dict) -> dict:
+    """
+    For each DISPATCH_OP, BFS backward through the original graph from output
+    tensor names until input tensor names are reached. Visited ops belong to
+    the partition. Returns membership dict + sanity-check pass/fail prints.
+    """
+    membership: dict = {}
+    for sg in original_graph["subgraphs"]:
+        sg_name = sg["name"]
+        if sg_name not in rewritten_meta:
+            continue
+        ops = sg["ops"]
+
+        producer: dict = {}
+        op_input_names: dict = {}
+        all_tensor_names = set()
+        for op in ops:
+            in_names = [t["name"] for t in op["inputs"]]
+            op_input_names[op["index"]] = in_names
+            all_tensor_names.update(in_names)
+            for t in op["outputs"]:
+                producer[t["name"]] = op["index"]
+                all_tensor_names.add(t["name"])
+
+        partitions = []
+        seen_ops_union: set = set()
+        for d in rewritten_meta[sg_name]["dispatch_ops"]:
+            for tname in d["input_tensor_names"] + d["output_tensor_names"]:
+                if tname not in all_tensor_names:
+                    raise RuntimeError(
+                        f"DISPATCH_OP {d['dispatch_op_index']} in subgraph "
+                        f"'{sg_name}' references tensor '{tname}' not in original"
+                    )
+
+            boundary = set(d["input_tensor_names"])
+            visited: set = set()
+            queue = list(d["output_tensor_names"])
+            while queue:
+                t = queue.pop()
+                if t in boundary:
+                    continue
+                pidx = producer.get(t)
+                if pidx is None or pidx in visited:
+                    continue
+                visited.add(pidx)
+                queue.extend(op_input_names.get(pidx, []))
+
+            seen_ops_union.update(visited)
+            opnames = Counter(ops[i]["opname"] for i in visited)
+            partitions.append(
+                {
+                    "dispatch_op_index": d["dispatch_op_index"],
+                    "qnn_graph_name": d["qnn_graph_name"],
+                    "original_op_indices": sorted(visited),
+                    "original_op_names": opnames,
+                    "op_count": len(visited),
+                }
+            )
+
+        total_partition = sum(p["op_count"] for p in partitions)
+        non_deleg = rewritten_meta[sg_name]["non_delegated_count"]
+        expected = len(ops)
+        actual = total_partition + non_deleg
+        ok = actual == expected
+        print(
+            f"  Sanity check  {sg_name}: "
+            f"sum_partitions={total_partition} + non_delegated={non_deleg} = "
+            f"{actual}  (original ops = {expected})  "
+            f"{'PASS' if ok else 'FAIL'}"
+        )
+        membership[sg_name] = partitions
+    return membership
+
+
+def _report_membership(
+    membership: dict, max_partitions: int = 8, max_runs: int = 8
+) -> None:
+    """ASCII: per-subgraph DISPATCH_OPs and their absorbed original op breakdown."""
+    for sg_name, partitions in membership.items():
+        print(f"Subgraph: {sg_name}  ({len(partitions)} dispatch ops)")
+        for p in partitions[:max_partitions]:
+            idxs = p["original_op_indices"]
+            span = f"ops {idxs[0]}-{idxs[-1]}" if idxs else "ops -"
+            print(
+                f"  DISPATCH_OP_{p['dispatch_op_index']} ({p['qnn_graph_name']}): "
+                f"{p['op_count']} original ops, {span}"
+            )
+            for nm, cnt in p["original_op_names"].most_common(max_runs):
+                print(f"    {nm} x{cnt}")
+            if len(p["original_op_names"]) > max_runs:
+                print(
+                    f"    ... ({len(p['original_op_names']) - max_runs} more op types)"
+                )
+        if len(partitions) > max_partitions:
+            print(f"  ... ({len(partitions) - max_partitions} more dispatch ops)")

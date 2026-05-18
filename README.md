@@ -44,7 +44,13 @@ r = Runtime(
 )
 r.report()
 data = r.json()
+
+membership = r.partition_membership("models/qwen.tflite")
+r.report_membership(membership)
 ```
+
+`partition_membership` maps each `DISPATCH_OP` in the rewritten flatbuffer back to the original op indices it absorbed, via tensor-name BFS through the original graph. Sanity-checked per subgraph: `sum(partitions) + non_delegated == original ops`.
+
 <img src="media/2.png">
 
 
@@ -77,6 +83,7 @@ Outputs written to `out=`:
 ### Runtime
 - Per-subgraph delegated/non_delegated op counts from rewritten flatbuffer
 - Global ValidateOp rejection codes from log (not per-subgraph)
+- Partition membership: which original ops were absorbed into each `DISPATCH_OP`
 
 ## Runtime setup
 
